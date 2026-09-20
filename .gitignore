@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# IDE
+.idea/
+
+# 本地数据（默认数据目录在 %LOCALAPPDATA%\MoneyManager\，此处兜底覆盖自定义目录的情况）
+data/
+backups/
+logs/
+
+# PyInstaller 打包产物（Phase 10）
+build/
+dist/
+*.spec
+!money_manager.spec

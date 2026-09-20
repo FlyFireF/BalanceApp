@@ -1,0 +1,7 @@
+# Money Manager 依赖清单
+# 安装：pip install -r requirements.txt
+PySide6>=6.8.0        # GUI 框架（含 QtCharts）
+SQLAlchemy>=2.0.36    # ORM
+openpyxl>=3.1.5       # XLSX 导入导出
+pytest>=8.3.0         # 测试
+pytest-qt>=4.4        # Qt 弹窗交互流测试

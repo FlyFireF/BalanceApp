@@ -1,0 +1,2 @@
+# 打包依赖（Phase 10）：仅在需要构建 exe 时安装
+PyInstaller>=6.0
