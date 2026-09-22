@@ -10,6 +10,7 @@
 - v2：交易表外键改为「软外键」（可空 + ON DELETE SET NULL）——
   渠道/账户/分类被删除时历史交易不受影响（核心原则：数据库没有硬性外键）。
 - v3：渠道新增「每月固定金额」列（默认 0，用户确认的功能）。
+- v4：渠道/账户/分类新增「自定义排序」列（默认 0，用户反馈）。
 """
 
 from __future__ import annotations
@@ -112,6 +113,27 @@ def _v3_channel_monthly_amount(engine: Engine) -> None:
                 "ALTER TABLE channels ADD COLUMN monthly_amount INTEGER NOT NULL DEFAULT 0"
             )
         )
+
+
+@migration(4)
+def _v4_entity_sort_order(engine: Engine) -> None:
+    """渠道/账户/分类新增「自定义排序」列（默认 0）。幂等：全新安装时
+    v1 的 create_all 已含该列则跳过；旧库升级时才真正执行 ALTER。"""
+    for table in ("channels", "accounts", "categories"):
+        with engine.connect() as conn:
+            exists = conn.execute(
+                text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:name"),
+                {"name": table},
+            ).scalar()
+            if not exists:
+                continue  # 表不存在（异常状态的旧库）：跳过
+            columns = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]
+        if "sort_order" in columns:
+            continue
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+            )
 
 
 def run_migrations(engine: Engine) -> None:

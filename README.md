@@ -185,6 +185,10 @@ python -m PyInstaller money_manager.spec
 - **杀毒软件误报**：PyInstaller 单文件 exe 偶发被误报，添加信任即可（也可改用 onedir 模式降低误报率）；
 - **不想打包也能用**：见「运行」——桌面快捷方式指向 `.venv\Scripts\pythonw.exe`，参数填 `app.py` 即可。
 
+## 更新记录
+
+版本更新说明见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 常见问题
 
 **Q: 数据库在哪里？**

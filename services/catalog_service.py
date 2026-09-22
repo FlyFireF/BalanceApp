@@ -73,17 +73,21 @@ class CatalogService:
     # ================= 渠道 Channel =================
 
     def list_active_channels(self) -> list[IdName]:
-        """所有启用中的渠道（按名称排序）。"""
+        """所有启用中的渠道（按自定义排序；未排序时按名称）。"""
         with database.session_scope(self._session_factory) as session:
             channels = session.scalars(
-                select(Channel).where(Channel.is_active.is_(True)).order_by(Channel.name)
+                select(Channel)
+                .where(Channel.is_active.is_(True))
+                .order_by(Channel.sort_order, Channel.name)
             )
             return [IdName(c.id, c.name) for c in channels]
 
     def list_all_channels(self) -> list[ChannelInfo]:
         """全部渠道（含停用），带每月固定金额与交易数（管理页用）。"""
         with database.session_scope(self._session_factory) as session:
-            channels = session.scalars(select(Channel).order_by(Channel.name))
+            channels = session.scalars(
+                select(Channel).order_by(Channel.sort_order, Channel.name)
+            )
             counts = self._transaction_counts(session, Transaction.channel_id)
             return [
                 ChannelInfo(
@@ -107,8 +111,12 @@ class CatalogService:
         with database.session_scope(self._session_factory) as session:
             if session.scalar(select(Channel).where(Channel.name == name)):
                 raise ValidationError("渠道名称已存在")
+            max_order = session.scalar(select(func.max(Channel.sort_order))) or 0
             channel = Channel(
-                name=name, description=description, monthly_amount=monthly_amount
+                name=name,
+                description=description,
+                monthly_amount=monthly_amount,
+                sort_order=max_order + 1,  # 新渠道追加到列表末尾
             )
             session.add(channel)
             session.flush()
@@ -152,6 +160,32 @@ class CatalogService:
             channel.is_active = is_active
         logger.info("渠道 #%d 状态 -> %s", channel_id, is_active)
 
+    def move_channel(self, channel_id: int, direction: str) -> None:
+        """上移/下移渠道（用户反馈：下拉框顺序自定义，解决高频渠道每次重选）。"""
+        if direction not in ("up", "down"):
+            raise ValidationError("移动方向无效")
+        with database.session_scope(self._session_factory) as session:
+            channels = session.scalars(
+                select(Channel).order_by(Channel.sort_order, Channel.name)
+            ).all()
+            self._move_in_list(channels, channel_id, direction, "渠道")
+
+    @staticmethod
+    def _move_in_list(entities, entity_id: int, direction: str, label: str) -> None:
+        """在有序实体列表中上移/下移：归一化排序值后交换相邻两项。边界处不动。"""
+        index = next((i for i, e in enumerate(entities) if e.id == entity_id), None)
+        if index is None:
+            raise NotFoundError(f"{label} #{entity_id} 不存在")
+        target = index - 1 if direction == "up" else index + 1
+        if target < 0 or target >= len(entities):
+            return
+        for i, entity in enumerate(entities):
+            entity.sort_order = i
+        entities[index].sort_order, entities[target].sort_order = (
+            entities[target].sort_order,
+            entities[index].sort_order,
+        )
+
     def delete_channel(self, channel_id: int) -> None:
         """删除渠道（仅限已停用）。
 
@@ -170,17 +204,21 @@ class CatalogService:
     # ================= 账户 Account =================
 
     def list_active_accounts(self) -> list[IdName]:
-        """所有启用中的账户（按名称排序）。"""
+        """所有启用中的账户（按自定义排序；未排序时按名称）。"""
         with database.session_scope(self._session_factory) as session:
             accounts = session.scalars(
-                select(Account).where(Account.is_active.is_(True)).order_by(Account.name)
+                select(Account)
+                .where(Account.is_active.is_(True))
+                .order_by(Account.sort_order, Account.name)
             )
             return [IdName(a.id, a.name) for a in accounts]
 
     def list_all_accounts(self) -> list[AccountInfo]:
         """全部账户（含停用），带交易数（管理页用）。"""
         with database.session_scope(self._session_factory) as session:
-            accounts = session.scalars(select(Account).order_by(Account.name))
+            accounts = session.scalars(
+                select(Account).order_by(Account.sort_order, Account.name)
+            )
             counts = self._transaction_counts(session, Transaction.account_id)
             return [
                 AccountInfo(
@@ -204,7 +242,13 @@ class CatalogService:
         with database.session_scope(self._session_factory) as session:
             if session.scalar(select(Account).where(Account.name == name)):
                 raise ValidationError("账户名称已存在")
-            account = Account(name=name, description=description, initial_balance=initial_balance)
+            max_order = session.scalar(select(func.max(Account.sort_order))) or 0
+            account = Account(
+                name=name,
+                description=description,
+                initial_balance=initial_balance,
+                sort_order=max_order + 1,  # 新账户追加到列表末尾
+            )
             session.add(account)
             session.flush()
             account_id = account.id
@@ -241,6 +285,16 @@ class CatalogService:
             account.is_active = is_active
         logger.info("账户 #%d 状态 -> %s", account_id, is_active)
 
+    def move_account(self, account_id: int, direction: str) -> None:
+        """上移/下移账户（用户反馈：下拉框顺序自定义）。"""
+        if direction not in ("up", "down"):
+            raise ValidationError("移动方向无效")
+        with database.session_scope(self._session_factory) as session:
+            accounts = session.scalars(
+                select(Account).order_by(Account.sort_order, Account.name)
+            ).all()
+            self._move_in_list(accounts, account_id, direction, "账户")
+
     def delete_account(self, account_id: int) -> None:
         """删除账户（仅限已停用）。历史交易引用置空（软外键），不受影响。"""
         with database.session_scope(self._session_factory) as session:
@@ -255,14 +309,14 @@ class CatalogService:
     # ================= 分类 Category =================
 
     def list_active_categories(self, category_type: str) -> list[IdName]:
-        """某类型（income / expense）下所有启用中的分类（按名称排序）。"""
+        """某类型（income / expense）下所有启用中的分类（按自定义排序；未排序时按名称）。"""
         if category_type not in _TYPE_VALUES:
             raise ValueError(f"无效的分类类型: {category_type!r}")
         with database.session_scope(self._session_factory) as session:
             categories = session.scalars(
                 select(Category)
                 .where(Category.type == category_type, Category.is_active.is_(True))
-                .order_by(Category.name)
+                .order_by(Category.sort_order, Category.name)
             )
             return [IdName(c.id, c.name) for c in categories]
 
@@ -270,7 +324,7 @@ class CatalogService:
         """全部分类（含停用），带交易数（管理页用）。"""
         with database.session_scope(self._session_factory) as session:
             categories = session.scalars(
-                select(Category).order_by(Category.type, Category.name)
+                select(Category).order_by(Category.type, Category.sort_order, Category.name)
             )
             counts = self._transaction_counts(session, Transaction.category_id)
             return [
@@ -297,7 +351,13 @@ class CatalogService:
             )
             if duplicate:
                 raise ValidationError("该类型的分类名称已存在")
-            category = Category(name=name, type=type, description=description)
+            max_order = session.scalar(select(func.max(Category.sort_order))) or 0
+            category = Category(
+                name=name,
+                type=type,
+                description=description,
+                sort_order=max_order + 1,  # 新分类追加到列表末尾
+            )
             session.add(category)
             session.flush()
             category_id = category.id
@@ -338,6 +398,21 @@ class CatalogService:
                 raise ValidationError("Other 是系统自动映射分类，不能停用")
             category.is_active = is_active
         logger.info("分类 #%d 状态 -> %s", category_id, is_active)
+
+    def move_category(self, category_id: int, direction: str) -> None:
+        """上移/下移分类（仅在其类型组内移动：收入与支出分类各自排序）。"""
+        if direction not in ("up", "down"):
+            raise ValidationError("移动方向无效")
+        with database.session_scope(self._session_factory) as session:
+            category = session.get(Category, category_id)
+            if category is None:
+                raise NotFoundError(f"分类 #{category_id} 不存在")
+            siblings = session.scalars(
+                select(Category)
+                .where(Category.type == category.type)
+                .order_by(Category.sort_order, Category.name)
+            ).all()
+            self._move_in_list(siblings, category_id, direction, "分类")
 
     def delete_category(self, category_id: int) -> None:
         """删除分类（仅限已停用）。Other 是自动映射分类，不允许删除（需求 §4.5）。"""

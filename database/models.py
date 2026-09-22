@@ -82,6 +82,7 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     monthly_amount: Mapped[Decimal] = mapped_column(Amount, nullable=False, default=Decimal("0"))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 自定义排序
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_local_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -106,6 +107,7 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     initial_balance: Mapped[Decimal] = mapped_column(Amount, nullable=False, default=Decimal("0"))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 自定义排序
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_local_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -142,6 +144,7 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(50), nullable=False)
     type: Mapped[str] = mapped_column(String(10), nullable=False)  # income / expense
     description: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 自定义排序
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_local_now)
     updated_at: Mapped[datetime] = mapped_column(

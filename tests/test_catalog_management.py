@@ -184,6 +184,68 @@ def test_delete_missing_raises(catalog_service):
         catalog_service.delete_category(99999)
 
 
+# ================= 自定义排序（用户反馈：高频渠道每次重选）=================
+
+def test_move_channel_up_puts_salary_first(seeded_factory, catalog_service):
+    """痛点验收：Salary 原本按名称排在中部，连续上移后下拉框第一位是它。"""
+    salary_id = entity_id(seeded_factory, Channel, "Salary")
+    names = [c.name for c in catalog_service.list_active_channels()]
+    for _ in range(names.index("Salary")):
+        catalog_service.move_channel(salary_id, "up")
+
+    names = [c.name for c in catalog_service.list_active_channels()]
+    assert names[0] == "Salary"
+    # 管理列表与下拉框顺序一致
+    assert [c.name for c in catalog_service.list_all_channels()][0] == "Salary"
+
+
+def test_move_channel_down_and_boundary_noop(seeded_factory, catalog_service):
+    bonus_id = entity_id(seeded_factory, Channel, "Bonus")  # 名称序第一位
+    before = [c.name for c in catalog_service.list_active_channels()]
+    catalog_service.move_channel(bonus_id, "down")
+    assert [c.name for c in catalog_service.list_active_channels()] != before  # 已下移一位
+    # 回到顶部后继续上移：边界处不动
+    catalog_service.move_channel(bonus_id, "up")
+    top_names = [c.name for c in catalog_service.list_active_channels()]
+    for _ in range(3):
+        catalog_service.move_channel(bonus_id, "up")
+    assert [c.name for c in catalog_service.list_active_channels()] == top_names
+
+
+def test_move_channel_invalid_and_missing(seeded_factory, catalog_service):
+    salary_id = entity_id(seeded_factory, Channel, "Salary")
+    with pytest.raises(ValidationError):
+        catalog_service.move_channel(salary_id, "left")
+    with pytest.raises(NotFoundError):
+        catalog_service.move_channel(99999, "up")
+
+
+def test_create_channel_appended_at_end(seeded_factory, catalog_service):
+    """新建实体追加到列表末尾（而不是按名称插到中间）。"""
+    catalog_service.create_channel("Z新渠道")
+    names = [c.name for c in catalog_service.list_active_channels()]
+    assert names[-1] == "Z新渠道"
+
+
+def test_move_account_up(seeded_factory, catalog_service):
+    bank_id = entity_id(seeded_factory, Account, "Bank")
+    names = [a.name for a in catalog_service.list_active_accounts()]
+    for _ in range(names.index("Bank")):
+        catalog_service.move_account(bank_id, "up")
+    assert [a.name for a in catalog_service.list_active_accounts()][0] == "Bank"
+
+
+def test_move_category_within_its_type(seeded_factory, catalog_service):
+    """分类只在其类型组内移动，不影响另一类型的顺序。"""
+    other_id = entity_id(seeded_factory, Category, "Other", EXPENSE)
+    expense_before = [c.name for c in catalog_service.list_active_categories(EXPENSE)]
+    income_before = [c.name for c in catalog_service.list_active_categories(INCOME)]
+    for _ in range(expense_before.index("Other")):
+        catalog_service.move_category(other_id, "up")
+    assert [c.name for c in catalog_service.list_active_categories(EXPENSE)][0] == "Other"
+    assert [c.name for c in catalog_service.list_active_categories(INCOME)] == income_before
+
+
 # ================= 账户 Account =================
 
 def test_create_account_with_initial_balance(catalog_service):

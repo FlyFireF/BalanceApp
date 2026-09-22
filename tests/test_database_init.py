@@ -127,10 +127,12 @@ def test_migration_v2_softens_foreign_keys_preserving_data(tmp_path):
         fks = conn.execute(text("PRAGMA foreign_key_list(transactions)")).fetchall()
         assert fks, "应有外键定义"
         assert all(fk[6] == "SET NULL" for fk in fks)  # on_delete 列
-        # v3 为旧库补上渠道的每月固定金额列
+        # v3/v4 为旧库补上渠道每月固定金额列与自定义排序列
+        # （模拟库只有 channels/transactions 两张旧表，缺表的实体被迁移安全跳过）
         columns = [row[1] for row in conn.execute(text("PRAGMA table_info(channels)"))]
         assert "monthly_amount" in columns
+        assert "sort_order" in columns
         assert conn.execute(
             text("SELECT MAX(version) FROM schema_version")
-        ).scalar() == 3
+        ).scalar() == 4
     engine.dispose()

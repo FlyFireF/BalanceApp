@@ -163,7 +163,9 @@ class StatisticsService:
         停用渠道仅在有历史交易时展示（余额仍需可见，需求 §4.1/§39）。
         """
         rows: list[ChannelStatistics] = []
-        channels = session.scalars(select(Channel).order_by(Channel.name))
+        channels = session.scalars(
+            select(Channel).order_by(Channel.sort_order, Channel.name)
+        )
         for channel in channels:
             data = channel_data.get(channel.id)
             if data is None and not channel.is_active:
@@ -199,7 +201,9 @@ class StatisticsService:
         展示规则同渠道：启用中的全部展示；停用仅在有历史交易时展示。
         """
         rows: list[AccountBalance] = []
-        accounts = session.scalars(select(Account).order_by(Account.name))
+        accounts = session.scalars(
+            select(Account).order_by(Account.sort_order, Account.name)
+        )
         for account in accounts:
             net = account_net.get(account.id)
             if net is None and not account.is_active:

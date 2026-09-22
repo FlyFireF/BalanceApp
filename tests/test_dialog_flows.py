@@ -209,6 +209,28 @@ def test_sort_dialog_default_flow(qtbot):
     assert dialog.sort() == [("date", "desc")]
 
 
+def test_channel_manage_move_up_flow(qtbot, seeded_factory):
+    """管理弹窗：选中 Salary → 点 ↑ → 顺序上移一位且保持选中。"""
+    catalog = CatalogService(session_factory=seeded_factory)
+
+    from ui.dialogs.channel_manage_dialog import ChannelManageDialog
+
+    dialog = ChannelManageDialog(catalog)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    for row in range(dialog.table.rowCount()):
+        if dialog.table.item(row, 0).text() == "Salary":
+            dialog.table.selectRow(row)
+            break
+    assert dialog.up_button.isEnabled()
+
+    before = [c.name for c in catalog.list_active_channels()]
+    qtbot.mouseClick(dialog.up_button, Qt.LeftButton)
+    after = [c.name for c in catalog.list_active_channels()]
+    assert after[before.index("Salary") - 1] == "Salary"
+    dialog.close()
+
+
 def test_channel_delete_confirm_flow(qtbot, seeded_factory):
     """管理弹窗删除流（用户反馈）：停用渠道 → 删除按钮可用 → 二次确认 → 删除。"""
     catalog = CatalogService(session_factory=seeded_factory)

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QRegularExpression
+from PySide6.QtCore import QRegularExpression, Qt
 from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QDialog,
@@ -123,11 +123,17 @@ class ChannelManageDialog(QDialog):
         self.toggle_button = QPushButton("停用")
         self.delete_button = QPushButton("删除")
         self.delete_button.setObjectName("dangerButton")
+        self.up_button = QPushButton("↑")
+        self.up_button.setToolTip("上移（决定记账下拉框中的顺序）")
+        self.down_button = QPushButton("↓")
+        self.down_button.setToolTip("下移")
         self.close_button = QPushButton("关闭")
         self.add_button.clicked.connect(self._on_add)
         self.edit_button.clicked.connect(self._on_edit)
         self.toggle_button.clicked.connect(self._on_toggle)
         self.delete_button.clicked.connect(self._on_delete)
+        self.up_button.clicked.connect(lambda: self._on_move("up"))
+        self.down_button.clicked.connect(lambda: self._on_move("down"))
         self.close_button.clicked.connect(self.accept)
 
         button_row = QHBoxLayout()
@@ -135,6 +141,8 @@ class ChannelManageDialog(QDialog):
         button_row.addWidget(self.edit_button)
         button_row.addWidget(self.toggle_button)
         button_row.addWidget(self.delete_button)
+        button_row.addWidget(self.up_button)
+        button_row.addWidget(self.down_button)
         button_row.addStretch(1)
         button_row.addWidget(self.close_button)
 
@@ -178,8 +186,28 @@ class ChannelManageDialog(QDialog):
         self.toggle_button.setEnabled(has_selection)
         # 仅已停用的渠道可删除（二次确认在 _on_delete）
         self.delete_button.setEnabled(has_selection and not entity.is_active)
+        self.up_button.setEnabled(has_selection)
+        self.down_button.setEnabled(has_selection)
         if has_selection:
             self.toggle_button.setText("停用" if entity.is_active else "启用")
+
+    def _on_move(self, direction: str) -> None:
+        entity = self._selected()
+        if entity is None:
+            return
+        try:
+            self._catalog.move_channel(entity.id, direction)
+        except NotFoundError as exc:
+            QMessageBox.information(self, "提示", str(exc))
+        except Exception:
+            logger.exception("移动渠道失败")
+            QMessageBox.critical(self, "错误", "操作失败，请查看日志。")
+        self.refresh()
+        # 保持选中，便于连续移动
+        for row in range(self.table.rowCount()):
+            if self.table.item(row, 0).data(Qt.UserRole) == entity.id:
+                self.table.selectRow(row)
+                break
 
     def _on_add(self) -> None:
         dialog = ChannelEditorDialog(self._catalog, self)
