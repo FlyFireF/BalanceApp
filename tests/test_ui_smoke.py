@@ -232,7 +232,7 @@ def test_dashboard_official_scenario(seeded_factory, transaction_service):
     salary = next(c for c in panel.channel_cards if c.stat.channel_name == "Salary")
     assert salary.percent_label.text() == "83.33%"  # 月度口径：(3000-500)/3000
     assert salary.progress.value() == 83
-    assert salary.balance_label.text() == "余额 ¥6,500.00"
+    assert salary.balance_label.text() == "余额 ¥2,500.00"  # 当月净额，不继承上月（用户确认）
     assert "¥3,000.00" in salary.month_metric_label.text()  # 本月行
     assert "¥8,000.00" in salary.cum_metric_label.text()  # 累计行
 
@@ -242,6 +242,41 @@ def test_dashboard_official_scenario(seeded_factory, transaction_service):
     ]
     assert "¥6,500.00" in account_texts
     assert panel.empty_label.isHidden()
+
+
+def test_dashboard_balance_is_month_net(seeded_factory, catalog_service, transaction_service):
+    """用户确认：加粗「余额」为当月净额——上月超额 200 也不倒扣。
+
+    上月（8月）：固定 3000 − 支出 3200 = 超额 200；
+    本月（9月）：固定 3000、无支出 → 显示 3000，而非累计结余 2800。
+    """
+    from datetime import date, datetime
+    from decimal import Decimal
+
+    from PySide6.QtWidgets import QApplication
+    from sqlalchemy import select
+
+    from ui.dashboard import DashboardPanel
+
+    QApplication.instance() or QApplication([])
+    salary_id = entity_id(seeded_factory, Channel, "Salary")
+    catalog_service.update_channel(salary_id, "Salary", "", Decimal("3000"))
+    with seeded_factory() as session:
+        channel = session.scalar(select(Channel).where(Channel.name == "Salary"))
+        channel.created_at = datetime(2026, 8, 1, 10, 0, 0)
+        session.commit()
+    account_id = entity_id(seeded_factory, Account, "Bank")
+    expense_cat = entity_id(seeded_factory, Category, "餐饮", EXPENSE)
+    transaction_service.create(
+        type=EXPENSE, amount=Decimal("3200"), date=date(2026, 8, 10),
+        channel_id=salary_id, account_id=account_id, category_id=expense_cat,
+    )
+
+    panel = DashboardPanel(StatisticsService(session_factory=seeded_factory))
+    panel.set_month(2026, 9)
+    salary = next(c for c in panel.channel_cards if c.stat.channel_name == "Salary")
+    assert salary.balance_label.text() == "余额 ¥3,000.00"  # 当月净额，上月超额不倒扣
+    assert "¥6,000.00" in salary.cum_metric_label.text()  # 累计收入仍可见
 
 
 def test_dashboard_month_switching(seeded_factory, transaction_service):
@@ -313,8 +348,8 @@ def test_dashboard_negative_balance(seeded_factory, transaction_service):
     assert salary.progress.value() == 0
 
 
-def test_dashboard_na_percent(seeded_factory):
-    """需求 §20：累计收入为 0 → N/A + 进度 0。"""
+def test_dashboard_zero_income_percent(seeded_factory):
+    """累计收入为 0 → 百分比显示 0% + 进度 0。"""
     from PySide6.QtWidgets import QApplication
 
     from ui.dashboard import DashboardPanel
@@ -323,7 +358,7 @@ def test_dashboard_na_percent(seeded_factory):
     panel = DashboardPanel(StatisticsService(session_factory=seeded_factory))
     panel.set_month(2026, 9)
     bonus = next(c for c in panel.channel_cards if c.stat.channel_name == "Bonus")
-    assert bonus.percent_label.text() == "N/A"
+    assert bonus.percent_label.text() == "0%"
     assert bonus.progress.value() == 0
 
 
@@ -335,7 +370,7 @@ def test_dashboard_percent_text_formats():
     assert _format_percent(Decimal("81.25")) == "81.25%"
     assert _format_percent(Decimal("80.00")) == "80%"
     assert _format_percent(Decimal("0")) == "0%"
-    assert _format_percent(None) == "N/A"
+    assert _format_percent(None) == "0%"
 
 
 # ---------- 搜索与快捷键冒烟 ----------
@@ -543,6 +578,131 @@ def test_delete_shortcut_guarded_outside_table(seeded_factory, monkeypatch):
     window._on_delete_shortcut()
     assert calls == [1]
     window.close()
+
+
+def test_enter_saves_from_any_bookkeeping_widget(seeded_factory):
+    """用户需求：焦点在记账页任意元素时，Enter 等同点击「保存」。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from ui.bookkeeping_panel import BookkeepingPanel
+
+    app = QApplication.instance() or QApplication([])
+    catalog, tx_service = _make_panel_services(seeded_factory)
+    panel = BookkeepingPanel(catalog, tx_service)
+    panel.show()
+    app.processEvents()
+
+    form = panel.form
+    widgets = (
+        form.amount_edit,
+        form.date_edit,
+        form.channel_combo,
+        form.account_combo,
+        form.category_combo,
+        form.note_edit,
+        form.tags_edit,
+        form.income_radio,
+        form.expense_radio,
+        panel.save_button,
+    )
+    for index, widget in enumerate(widgets, start=1):
+        form.amount_edit.setText(f"{index}.00")
+        widget.setFocus()
+        app.processEvents()
+        assert widget.hasFocus()
+
+        QTest.keyClick(widget, Qt.Key_Return)
+        app.processEvents()
+
+        assert len(tx_service.list_transactions()) == index  # 每次回车都保存一笔
+
+    # 保存后金额被清空（与点击按钮一致）
+    assert form.amount_edit.text() == ""
+    panel.close()
+
+
+def test_enter_in_combo_popup_selects_without_saving(seeded_factory):
+    """下拉弹窗中回车用于选中条目，不应触发保存。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from ui.bookkeeping_panel import BookkeepingPanel
+
+    app = QApplication.instance() or QApplication([])
+    catalog, tx_service = _make_panel_services(seeded_factory)
+    panel = BookkeepingPanel(catalog, tx_service)
+    panel.show()
+    app.processEvents()
+    panel.form.amount_edit.setText("12.00")
+
+    combo = panel.form.channel_combo
+    combo.setFocus()
+    combo.showPopup()
+    app.processEvents()
+    assert combo.view().isVisible()
+
+    QTest.keyClick(combo.view(), Qt.Key_Down)
+    QTest.keyClick(combo.view(), Qt.Key_Return)
+    app.processEvents()
+
+    assert tx_service.list_transactions() == []  # 未保存
+    assert panel.form.amount_edit.text() == "12.00"  # 输入保留
+    panel.close()
+
+
+def test_enter_edits_selected_history_record(seeded_factory, monkeypatch):
+    """用户需求：焦点在历史记录且已选中行时，Enter 等同「编辑」/双击。"""
+    from datetime import date
+    from decimal import Decimal
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from ui.history_panel import HistoryPanel
+
+    app = QApplication.instance() or QApplication([])
+    catalog, tx_service = _make_panel_services(seeded_factory)
+    channel_id = next(c.id for c in catalog.list_active_channels() if c.name == "Salary")
+    account_id = next(a.id for a in catalog.list_active_accounts() if a.name == "Bank")
+    tx_service.create(
+        type="expense", amount=Decimal("42.00"), date=date(2026, 9, 18),
+        channel_id=channel_id, account_id=account_id, note="回车编辑",
+    )
+    panel = HistoryPanel(catalog, tx_service)
+    panel.refresh()
+    panel.show()
+    app.processEvents()
+
+    calls = []
+    monkeypatch.setattr(panel, "edit_selected", lambda: calls.append(True))
+
+    # 未选中：回车不触发
+    panel.table.setFocus()
+    app.processEvents()
+    assert panel.table.hasFocus()
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key_Return)
+    assert calls == []
+
+    # 选中 + 焦点在表格：Enter 触发编辑
+    panel.table.selectRow(0)
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key_Return)
+    assert calls == [True]
+
+    # 小键盘 Enter 同样生效
+    QTest.keyClick(panel.table, Qt.Key_Enter)
+    assert calls == [True, True]
+
+    # 焦点不在历史记录（搜索框）：回车不触发编辑
+    panel.search_edit.setFocus()
+    app.processEvents()
+    QTest.keyClick(panel.search_edit, Qt.Key_Return)
+    assert calls == [True, True]
+
+    panel.close()
 
 
 # ---------- 数据管理冒烟 ----------

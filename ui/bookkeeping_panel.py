@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from services.exceptions import ValidationError
@@ -61,13 +63,32 @@ class BookkeepingPanel(QFrame):
         layout.addWidget(self._form)
         layout.addLayout(bottom_row)
 
-        # 金额输入框回车 = 快速保存
-        self._form.amount_edit.returnPressed.connect(self.save_transaction)
+        # 回车 = 保存（用户需求）：焦点在记账页任意元素时均生效，
+        # 包括金额/备注/标签输入框、日期、下拉框、收入/支出单选与保存按钮。
+        for widget in (self, *self.findChildren(QWidget)):
+            widget.installEventFilter(self)
 
     @property
     def form(self) -> TransactionForm:
         """暴露表单（测试与外部联动使用）。"""
         return self._form
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """拦截记账页内的 Enter / 小键盘 Enter，触发保存。
+
+        下拉框选项列表、日期日历等弹出的子窗口不拦截，回车仍交给弹窗
+        用于选中条目（这些控件位于独立的 popup 窗口中，window() 不同）。
+        """
+        if (
+            event.type() == QEvent.KeyPress
+            and event.key() in (Qt.Key_Return, Qt.Key_Enter)
+            and isinstance(watched, QWidget)
+            and watched.window() is self.window()
+            and QApplication.activePopupWidget() is None
+        ):
+            self.save_transaction()
+            return True
+        return super().eventFilter(watched, event)
 
     def save_transaction(self) -> None:
         """校验并保存当前表单；成功则清空输入、保留默认值并发出信号。"""

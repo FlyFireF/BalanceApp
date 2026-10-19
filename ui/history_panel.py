@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -107,6 +107,9 @@ class HistoryPanel(QFrame):
         self.table.setAlternatingRowColors(True)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemDoubleClicked.connect(lambda _item: self.edit_selected())
+        # 回车 = 编辑选中记录（用户需求）：与「编辑」按钮/双击同效
+        self.table.installEventFilter(self)
+        self.table.viewport().installEventFilter(self)
 
         # 分页栏（翻页 + 每页条数 10/20/50/100）
         self.prev_button = QPushButton("上一页")
@@ -171,6 +174,17 @@ class HistoryPanel(QFrame):
         """清空搜索（Esc，需求 §14）；textChanged 会自动触发刷新。"""
         if self.search_edit.text():
             self.search_edit.clear()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """焦点在历史表格时，Enter / 小键盘 Enter 编辑选中记录。"""
+        if (
+            event.type() == QEvent.KeyPress
+            and event.key() in (Qt.Key_Return, Qt.Key_Enter)
+            and self._selected_record() is not None
+        ):
+            self.edit_selected()
+            return True
+        return super().eventFilter(watched, event)
 
     # ---------- 分页 ----------
 

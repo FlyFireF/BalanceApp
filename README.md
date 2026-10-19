@@ -21,7 +21,8 @@ Account / 分类 Category」三层概念。
 - CSV / XLSX / JSON 导入导出（逐行校验、整体失败保护、重复自动跳过）
 - SQLite 每日自动备份，保留天数可设置（默认 30 天）
 - 主题：浅色 / 深色 / 跟随系统（默认），Windows 原生控件风格
-- 快捷键：Ctrl+F 搜索、Esc 取消、Delete 删除（仍二次确认）
+- 快捷键：Ctrl+F 搜索、Esc 取消、Delete 删除（仍二次确认）；
+  Enter 在记账页等同「保存」、在历史记录表格等同「编辑」
 - 打包为 Windows 可执行程序（PyInstaller，见下方「Windows 打包」）
 
 ## 技术栈

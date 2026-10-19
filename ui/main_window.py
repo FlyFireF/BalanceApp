@@ -112,8 +112,8 @@ class MainWindow(QMainWindow):
         self._theme_timer.timeout.connect(self._sync_system_theme)
         self._theme_timer.start()
 
-        self.resize(1280, 780)
-        self.setMinimumSize(1080, 620)
+        self.resize(1440, 720)
+        self.setMinimumSize(640, 480)
 
         self.history_panel.refresh()
 

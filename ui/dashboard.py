@@ -43,9 +43,9 @@ logger = logging.getLogger(__name__)
 
 
 def _format_percent(percent: Decimal | None) -> str:
-    """百分比文本：None → N/A；去除多余小数零（81.25% / 80% / 0%）。"""
+    """百分比文本：None → 0%；去除多余小数零（81.25% / 80% / 0%）。"""
     if percent is None:
-        return "N/A"
+        return "0%"
     text = f"{percent:f}".rstrip("0").rstrip(".")
     if not text:
         text = "0"
@@ -99,7 +99,9 @@ class ChannelCard(QFrame):
         )
         self.cum_metric_label.setObjectName("metricLabel")
 
-        self.balance_label = QLabel(f"余额 {format_money(stat.balance)}")
+        # 加粗「余额」= 当月净额（用户确认：不继承上月结余，上月超额不倒扣）
+        self.month_net = stat.month_income - stat.month_expense
+        self.balance_label = QLabel(f"余额 {format_money(self.month_net)}")
         self.balance_label.setObjectName("balanceLabel")
 
         self.progress = QProgressBar()
@@ -109,8 +111,8 @@ class ChannelCard(QFrame):
         self.progress.setValue(int(percent) if percent is not None else 0)
 
         color = _percent_color(percent)
-        if stat.balance < 0:
-            # 需求 §20：负余额固定红色（颜色随主题）
+        if self.month_net < 0:
+            # 当月净额为负（超额）：红色（颜色随主题）
             color = QColor(theme.color("red"))
             self.balance_label.setStyleSheet(f"color: {theme.color('red')};")
             self.percent_label.setStyleSheet(f"color: {theme.color('red')};")
