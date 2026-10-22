@@ -10,18 +10,20 @@ import logging
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QDate, Signal
 from PySide6.QtWidgets import (
+    QDateEdit,
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
 )
 
-from services.export_service import ExportService
+from services.export_service import ExportService, month_export_range
 from services.import_service import ImportService
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ class DataManageDialog(QDialog):
         self._import_service = import_service
         self._export_service = export_service
         self.setWindowTitle("数据管理")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(520)
 
         info = QLabel(
             "导出：把当前数据保存为文件（备份 / 迁移）。\n"
@@ -54,6 +56,49 @@ class DataManageDialog(QDialog):
 
         export_title = QLabel("导出")
         export_title.setObjectName("sectionTitle")
+
+        # 导出范围（仅作用于 CSV / XLSX；JSON 始终全量）
+        export_range_hint = QLabel("导出范围（CSV / XLSX；JSON 始终导出完整数据）：")
+        export_range_hint.setObjectName("dialogInfo")
+
+        self.export_all_radio = QRadioButton("全部数据")
+        self.export_all_radio.setChecked(True)
+
+        self.export_month_radio = QRadioButton("指定月份")
+        self.export_month_edit = QDateEdit()
+        self.export_month_edit.setCalendarPopup(True)
+        self.export_month_edit.setDisplayFormat("yyyy-MM")
+        self.export_month_edit.setDate(QDate.currentDate())
+        self.export_month_edit.setMinimumDate(QDate(1900, 1, 1))
+        self.export_month_edit.setMaximumDate(QDate.currentDate())
+        month_row = QHBoxLayout()
+        month_row.addWidget(self.export_month_radio)
+        month_row.addWidget(self.export_month_edit)
+        month_row.addWidget(QLabel("（本月导出 1 日 ~ 今天）"))
+        month_row.addStretch(1)
+
+        self.export_range_radio = QRadioButton("自定义范围")
+        today = QDate.currentDate()
+        self.export_range_start_edit = self._make_date_edit(
+            QDate(today.year(), today.month(), 1)
+        )
+        self.export_range_end_edit = self._make_date_edit(today)
+        range_row = QHBoxLayout()
+        range_row.addWidget(self.export_range_radio)
+        range_row.addWidget(self.export_range_start_edit)
+        range_row.addWidget(QLabel("至"))
+        range_row.addWidget(self.export_range_end_edit)
+        range_row.addWidget(QLabel("（含首尾，可同一天）"))
+        range_row.addStretch(1)
+
+        for radio in (
+            self.export_all_radio,
+            self.export_month_radio,
+            self.export_range_radio,
+        ):
+            radio.toggled.connect(self._sync_export_controls)
+        self._sync_export_controls()
+
         self.export_json_button = QPushButton("导出 JSON（完整备份）")
         self.export_csv_button = QPushButton("导出 CSV（交易）")
         self.export_xlsx_button = QPushButton("导出 XLSX（Excel）")
@@ -90,6 +135,10 @@ class DataManageDialog(QDialog):
         layout.addWidget(info)
         layout.addSpacing(8)
         layout.addWidget(export_title)
+        layout.addWidget(export_range_hint)
+        layout.addWidget(self.export_all_radio)
+        layout.addLayout(month_row)
+        layout.addLayout(range_row)
         layout.addLayout(export_row)
         layout.addSpacing(8)
         layout.addWidget(import_title)
@@ -117,23 +166,46 @@ class DataManageDialog(QDialog):
         )
 
     def _on_export_csv(self) -> None:
-        path = self._save_path("导出 CSV", f"money_manager_transactions_{date.today():%Y%m%d}.csv", "CSV 文件 (*.csv)")
+        try:
+            date_from, date_to = self._selected_export_range()
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法导出", str(exc))
+            return
+        filename = self._export_filename(
+            "money_manager_transactions", "csv", date_from, date_to
+        )
+        path = self._save_path("导出 CSV", filename, "CSV 文件 (*.csv)")
         if path is None:
             return
         try:
-            counts = self._export_service.export_csv(path)
+            counts = self._export_service.export_csv(
+                path, date_from=date_from, date_to=date_to
+            )
         except Exception:
             logger.exception("导出 CSV 失败")
             QMessageBox.critical(self, "错误", "导出失败，请查看日志。")
             return
-        QMessageBox.information(self, "导出成功", f"已导出交易 {counts['transactions']} 笔\n\n{path}")
+        QMessageBox.information(
+            self,
+            "导出成功",
+            f"已导出交易 {counts['transactions']} 笔{self._range_suffix(date_from, date_to)}"
+            f"\n\n{path}",
+        )
 
     def _on_export_xlsx(self) -> None:
-        path = self._save_path("导出 XLSX", f"money_manager_{date.today():%Y%m%d}.xlsx", "Excel 文件 (*.xlsx)")
+        try:
+            date_from, date_to = self._selected_export_range()
+        except ValueError as exc:
+            QMessageBox.warning(self, "无法导出", str(exc))
+            return
+        filename = self._export_filename("money_manager", "xlsx", date_from, date_to)
+        path = self._save_path("导出 XLSX", filename, "Excel 文件 (*.xlsx)")
         if path is None:
             return
         try:
-            counts = self._export_service.export_xlsx(path)
+            counts = self._export_service.export_xlsx(
+                path, date_from=date_from, date_to=date_to
+            )
         except Exception:
             logger.exception("导出 XLSX 失败")
             QMessageBox.critical(self, "错误", "导出失败，请查看日志。")
@@ -142,8 +214,62 @@ class DataManageDialog(QDialog):
             self,
             "导出成功",
             f"已导出：渠道 {counts['channels']} 个 / 账户 {counts['accounts']} 个 / "
-            f"分类 {counts['categories']} 个 / 交易 {counts['transactions']} 笔\n\n{path}",
+            f"分类 {counts['categories']} 个 / 交易 {counts['transactions']} 笔"
+            f"{self._range_suffix(date_from, date_to)}\n\n{path}",
         )
+
+    # ---------- 导出范围 ----------
+
+    @staticmethod
+    def _make_date_edit(value: QDate) -> QDateEdit:
+        edit = QDateEdit()
+        edit.setCalendarPopup(True)
+        edit.setDisplayFormat("yyyy-MM-dd")
+        edit.setDate(value)
+        edit.setMinimumDate(QDate(1900, 1, 1))
+        edit.setMaximumDate(QDate(3000, 12, 31))
+        return edit
+
+    def _sync_export_controls(self) -> None:
+        """仅在对应选项被选中时启用日期控件。"""
+        self.export_month_edit.setEnabled(self.export_month_radio.isChecked())
+        custom = self.export_range_radio.isChecked()
+        self.export_range_start_edit.setEnabled(custom)
+        self.export_range_end_edit.setEnabled(custom)
+
+    def _selected_export_range(self) -> tuple[date | None, date | None]:
+        """当前导出范围（含首尾）；「全部数据」返回 (None, None)。
+
+        Raises:
+            ValueError: 自定义范围的开始日期晚于结束日期。
+        """
+        if self.export_month_radio.isChecked():
+            month = self.export_month_edit.date()
+            return month_export_range(month.year(), month.month())
+        if self.export_range_radio.isChecked():
+            start = self.export_range_start_edit.date()
+            end = self.export_range_end_edit.date()
+            date_from = date(start.year(), start.month(), start.day())
+            date_to = date(end.year(), end.month(), end.day())
+            if date_from > date_to:
+                raise ValueError("开始日期不能晚于结束日期")
+            return date_from, date_to
+        return None, None
+
+    @staticmethod
+    def _export_filename(
+        base: str, suffix: str, date_from: date | None, date_to: date | None
+    ) -> str:
+        """默认文件名：全量导出用当天日期，范围导出附加起止日期。"""
+        if date_from is None or date_to is None:
+            return f"{base}_{date.today():%Y%m%d}.{suffix}"
+        return f"{base}_{date_from:%Y%m%d}-{date_to:%Y%m%d}.{suffix}"
+
+    @staticmethod
+    def _range_suffix(date_from: date | None, date_to: date | None) -> str:
+        if date_from is None or date_to is None:
+            return ""
+        return f"\n导出范围：{date_from:%Y-%m-%d} ~ {date_to:%Y-%m-%d}（含首尾）"
 
     # ---------- 导入 ----------
 

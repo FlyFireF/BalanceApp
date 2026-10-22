@@ -104,6 +104,48 @@ def test_bookkeeping_panel_save(seeded_factory):
     assert panel.form.amount_edit.text() == ""  # 保存成功后清空金额（需求 §11）
 
 
+def test_bookkeeping_default_category_is_first_in_list(seeded_factory):
+    """用户反馈：默认选中分类列表第一项（支出：餐饮，收入：Salary）。"""
+    from PySide6.QtWidgets import QApplication
+
+    from ui.bookkeeping_panel import BookkeepingPanel
+
+    QApplication.instance() or QApplication([])
+    catalog, tx_service = _make_panel_services(seeded_factory)
+    panel = BookkeepingPanel(catalog, tx_service)
+
+    form = panel.form
+    assert form.type() == "expense"
+    assert form.category_combo.currentText() == "餐饮"
+
+    form.set_type("income")
+    assert form.category_combo.currentText() == "Salary"
+
+    form.set_type("expense")
+    assert form.category_combo.currentText() == "餐饮"
+    panel.close()
+
+
+def test_bookkeeping_default_category_follows_first_item_after_changes(seeded_factory):
+    """第一项改名/停用后，默认值随新列表第一项变化，无需按名称硬编码。"""
+    from PySide6.QtWidgets import QApplication
+
+    from ui.bookkeeping_panel import BookkeepingPanel
+
+    QApplication.instance() or QApplication([])
+    catalog, tx_service = _make_panel_services(seeded_factory)
+    dining_id = entity_id(seeded_factory, Category, "餐饮", EXPENSE)
+    catalog.update_category(dining_id, "外卖")
+
+    panel = BookkeepingPanel(catalog, tx_service)
+    assert panel.form.category_combo.currentText() == "外卖"
+
+    catalog.set_category_active(dining_id, False)
+    panel.form.reload_options()
+    assert panel.form.category_combo.currentText() == "出行"
+    panel.close()
+
+
 def test_bookkeeping_panel_invalid_amount_blocked(seeded_factory, monkeypatch):
     from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -733,6 +775,92 @@ def test_data_manage_dialog_export_flow(seeded_factory, tmp_path, monkeypatch):
     dialog._on_export_json()
     assert target.exists()
     assert infos
+
+
+def test_data_manage_dialog_csv_export_month_range(seeded_factory, tmp_path, monkeypatch):
+    """选择「指定月份」→ CSV 仅导出该月交易（含首尾）。"""
+    import csv
+    from datetime import date
+    from decimal import Decimal
+
+    from PySide6.QtCore import QDate
+    from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+
+    from ui.dialogs.data_manage_dialog import DataManageDialog
+
+    QApplication.instance() or QApplication([])
+    export_svc = ExportService(session_factory=seeded_factory)
+    import_svc = ImportService(session_factory=seeded_factory)
+    _, tx_service = _make_panel_services(seeded_factory)
+
+    channel_id = entity_id(seeded_factory, Channel, "Salary")
+    account_id = entity_id(seeded_factory, Account, "Bank")
+    category_id = entity_id(seeded_factory, Category, "餐饮", EXPENSE)
+    for day, note in ((date(2020, 1, 31), "一月末"), (date(2020, 2, 1), "二月首")):
+        tx_service.create(
+            type=EXPENSE, amount=Decimal("10.00"), date=day,
+            channel_id=channel_id, account_id=account_id,
+            category_id=category_id, note=note,
+        )
+
+    infos = []
+    monkeypatch.setattr(
+        QMessageBox, "information", lambda *args, **kwargs: infos.append(args)
+    )
+    target = tmp_path / "jan.csv"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(target), ""))
+    )
+
+    dialog = DataManageDialog(import_svc, export_svc)
+    dialog.export_month_radio.setChecked(True)
+    assert dialog.export_month_edit.isEnabled()
+    dialog.export_month_edit.setDate(QDate(2020, 1, 15))
+    dialog._on_export_csv()
+
+    with open(target, encoding="utf-8-sig", newline="") as f:
+        assert [row["备注"] for row in csv.DictReader(f)] == ["一月末"]
+    assert infos
+    dialog.close()
+
+
+def test_data_manage_dialog_custom_range_validation(seeded_factory, monkeypatch):
+    """自定义范围允许起止同一天；开始晚于结束时提示且不弹出保存框。"""
+    from datetime import date
+
+    from PySide6.QtCore import QDate
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from ui.dialogs.data_manage_dialog import DataManageDialog
+
+    QApplication.instance() or QApplication([])
+    dialog = DataManageDialog(
+        ImportService(session_factory=seeded_factory),
+        ExportService(session_factory=seeded_factory),
+    )
+    assert dialog._selected_export_range() == (None, None)  # 默认全部数据
+
+    dialog.export_range_radio.setChecked(True)
+    assert dialog.export_range_start_edit.isEnabled()
+    assert not dialog.export_month_edit.isEnabled()
+
+    dialog.export_range_start_edit.setDate(QDate(2020, 1, 15))
+    dialog.export_range_end_edit.setDate(QDate(2020, 1, 15))
+    assert dialog._selected_export_range() == (date(2020, 1, 15), date(2020, 1, 15))
+
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *args, **kwargs: warnings.append(args)
+    )
+    save_calls = []
+    monkeypatch.setattr(
+        dialog, "_save_path", lambda *args, **kwargs: save_calls.append(args)
+    )
+    dialog.export_range_end_edit.setDate(QDate(2020, 1, 1))
+    dialog._on_export_csv()
+    assert warnings
+    assert save_calls == []  # 校验失败，未弹出保存对话框
+    dialog.close()
 
 
 def test_data_manage_dialog_import_error_flow(seeded_factory, tmp_path, monkeypatch):

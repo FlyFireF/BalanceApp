@@ -11,7 +11,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select
@@ -33,6 +33,27 @@ def _counts(channels: int, accounts: int, categories: int, transactions: int) ->
         "categories": categories,
         "transactions": transactions,
     }
+
+
+def month_export_range(
+    year: int, month: int, today: date | None = None
+) -> tuple[date, date]:
+    """指定月份的导出范围（含首尾）。
+
+    当月未过完时导出「1 日 ~ 今天」，其余月份导出整月。
+    """
+    today = today or date.today()
+    first_day = date(year, month, 1)
+    if (year, month) == (today.year, today.month):
+        return first_day, today
+    next_month = date(year + (month == 12), month % 12 + 1, 1)
+    return first_day, next_month - timedelta(days=1)
+
+
+def _validate_date_range(date_from: date | None, date_to: date | None) -> None:
+    """起止日期（含首尾）；允许起止相同，但不允许开始晚于结束。"""
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise ValueError("开始日期不能晚于结束日期")
 
 
 class ExportService:
@@ -105,10 +126,16 @@ class ExportService:
         logger.info("导出 JSON：%s（交易 %d 笔）", path, len(payload["transactions"]))
         return _counts(len(channels), len(accounts), len(categories), len(transactions))
 
-    def export_csv(self, path: Path) -> dict:
-        """导出交易 CSV（需求 §30）。"""
+    def export_csv(
+        self, path: Path, *, date_from: date | None = None, date_to: date | None = None
+    ) -> dict:
+        """导出交易 CSV（需求 §30）。
+
+        date_from / date_to 为可选的日期范围（含首尾）；均不传时导出全部交易。
+        """
+        _validate_date_range(date_from, date_to)
         with database.session_scope(self._session_factory) as session:
-            transactions = TransactionRepository(session).list_all()
+            transactions = self._query_transactions(session, date_from, date_to)
             rows = [
                 [
                     t.date.isoformat(),
@@ -128,15 +155,26 @@ class ExportService:
             writer = csv.writer(f)
             writer.writerow(CSV_HEADERS)
             writer.writerows(rows)
-        logger.info("导出 CSV：%s（交易 %d 笔）", path, len(rows))
+        logger.info(
+            "导出 CSV：%s（交易 %d 笔，范围 %s ~ %s）",
+            path, len(rows),
+            date_from.isoformat() if date_from else "不限",
+            date_to.isoformat() if date_to else "不限",
+        )
         return _counts(0, 0, 0, len(rows))
 
-    def export_xlsx(self, path: Path) -> dict:
-        """导出多 Sheet Excel（需求 §31）。"""
+    def export_xlsx(
+        self, path: Path, *, date_from: date | None = None, date_to: date | None = None
+    ) -> dict:
+        """导出多 Sheet Excel（需求 §31）。
+
+        Transactions 按可选日期范围（含首尾）过滤；实体 Sheet 保持全量。
+        """
         from openpyxl import Workbook
 
+        _validate_date_range(date_from, date_to)
         with database.session_scope(self._session_factory) as session:
-            transactions = TransactionRepository(session).list_all()
+            transactions = self._query_transactions(session, date_from, date_to)
             channels = session.scalars(select(Channel).order_by(Channel.name)).all()
             accounts = session.scalars(select(Account).order_by(Account.name)).all()
             categories = session.scalars(
@@ -182,5 +220,18 @@ class ExportService:
             path.parent.mkdir(parents=True, exist_ok=True)
             workbook.save(path)
 
-        logger.info("导出 XLSX：%s（交易 %d 笔）", path, len(transactions))
+        logger.info(
+            "导出 XLSX：%s（交易 %d 笔，范围 %s ~ %s）",
+            path, len(transactions),
+            date_from.isoformat() if date_from else "不限",
+            date_to.isoformat() if date_to else "不限",
+        )
         return _counts(len(channels), len(accounts), len(categories), len(transactions))
+
+    @staticmethod
+    def _query_transactions(session, date_from: date | None, date_to: date | None):
+        """按可选范围查询交易；都不传时返回全部。"""
+        repository = TransactionRepository(session)
+        if date_from is None and date_to is None:
+            return repository.list_all()
+        return repository.list_in_range(date_from, date_to)

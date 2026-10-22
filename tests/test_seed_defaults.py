@@ -45,6 +45,20 @@ def test_default_expense_categories_created(seeded_session):
     assert names == set(DEFAULT_EXPENSE_CATEGORIES)
 
 
+def test_default_categories_keep_declared_order(seeded_session):
+    """默认分类按声明顺序写入 sort_order：列表第一项即记账页默认选中项。"""
+    for category_type, expected in (
+        (CategoryType.EXPENSE.value, DEFAULT_EXPENSE_CATEGORIES),
+        (CategoryType.INCOME.value, DEFAULT_INCOME_CATEGORIES),
+    ):
+        names = seeded_session.scalars(
+            select(Category.name)
+            .where(Category.type == category_type)
+            .order_by(Category.sort_order)
+        ).all()
+        assert names == expected
+
+
 def test_other_category_exists_for_both_types(seeded_session):
     """收入与支出必须各有一个独立的 Other 分类（逻辑隔离）。"""
     income_other = seeded_session.scalar(

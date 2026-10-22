@@ -7,14 +7,15 @@ import json
 from datetime import date
 from decimal import Decimal
 
-from openpyxl import Workbook
+import pytest
+from openpyxl import Workbook, load_workbook
 
 from database.models import Setting
 from services.catalog_service import CatalogService
-from services.export_service import ExportService
+from services.export_service import ExportService, month_export_range
 from services.import_service import ImportService
 from services.transaction_service import TransactionService
-from helpers import seed_official_scenario
+from helpers import create_kwargs, seed_official_scenario
 
 
 def _seed_source(seeded_factory, transaction_service, catalog_service) -> None:
@@ -189,6 +190,71 @@ def test_csv_export_then_import_roundtrip(seeded_factory, transaction_service, t
     assert again.imported == 0 and again.skipped_duplicates == 4
 
 
+# ---------- 导出日期范围 ----------
+
+def _create_range_transactions(seeded_factory, transaction_service) -> None:
+    """在 2020-01/02 边界创建交易（固定过去日期，结果不随运行日期变化）。"""
+    for day, note in (
+        (date(2020, 1, 1), "范围首日"),
+        (date(2020, 1, 15), "范围中间"),
+        (date(2020, 1, 31), "范围末日"),
+        (date(2020, 2, 1), "范围之外"),
+    ):
+        transaction_service.create(
+            **create_kwargs(seeded_factory, date=day, note=note)
+        )
+
+
+def test_month_export_range_resolution():
+    """当月 → 1 日~今天；历史月份 → 整月（含跨年、闰月）。"""
+    today = date(2026, 10, 22)
+    assert month_export_range(2026, 9, today=today) == (
+        date(2026, 9, 1), date(2026, 9, 30)
+    )
+    assert month_export_range(2026, 10, today=today) == (
+        date(2026, 10, 1), date(2026, 10, 22)
+    )
+    assert month_export_range(2026, 12, today=today) == (
+        date(2026, 12, 1), date(2026, 12, 31)
+    )
+    assert month_export_range(2024, 2, today=date(2024, 3, 1)) == (
+        date(2024, 2, 1), date(2024, 2, 29)
+    )
+
+
+def test_csv_export_date_range_inclusive(seeded_factory, transaction_service, tmp_path):
+    """范围包含首尾；开始=结束时仅导出那一天。"""
+    _create_range_transactions(seeded_factory, transaction_service)
+    export = ExportService(session_factory=seeded_factory)
+
+    path = tmp_path / "jan.csv"
+    counts = export.export_csv(
+        path, date_from=date(2020, 1, 1), date_to=date(2020, 1, 31)
+    )
+    assert counts["transactions"] == 3
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        notes = {row["备注"] for row in csv.DictReader(f)}
+    assert notes == {"范围首日", "范围中间", "范围末日"}
+
+    one_day = tmp_path / "one_day.csv"
+    counts = export.export_csv(
+        one_day, date_from=date(2020, 1, 15), date_to=date(2020, 1, 15)
+    )
+    assert counts["transactions"] == 1
+    with open(one_day, encoding="utf-8-sig", newline="") as f:
+        assert [row["备注"] for row in csv.DictReader(f)] == ["范围中间"]
+
+
+def test_csv_export_rejects_inverted_range(seeded_factory, tmp_path):
+    export = ExportService(session_factory=seeded_factory)
+    with pytest.raises(ValueError, match="开始日期不能晚于结束日期"):
+        export.export_csv(
+            tmp_path / "bad.csv",
+            date_from=date(2020, 2, 1),
+            date_to=date(2020, 1, 31),
+        )
+
+
 def test_csv_import_row_errors_reported(seeded_factory, transaction_service, target_factory, tmp_path):
     """需求 §32：第 N 行级错误信息；任何错误 → 整体不导入。"""
     seed_official_scenario(seeded_factory, transaction_service)
@@ -346,6 +412,27 @@ def test_xlsx_export_then_import_roundtrip(seeded_factory, transaction_service, 
 
     again = target_import.import_xlsx(path)
     assert again.imported == 0 and again.skipped_duplicates == 5
+
+
+def test_xlsx_export_date_range_filters_transactions_only(
+    seeded_factory, transaction_service, tmp_path
+):
+    """Transactions Sheet 按范围过滤；实体 Sheet 保持全量。"""
+    _create_range_transactions(seeded_factory, transaction_service)
+    path = tmp_path / "jan.xlsx"
+    counts = ExportService(session_factory=seeded_factory).export_xlsx(
+        path, date_from=date(2020, 1, 1), date_to=date(2020, 1, 31)
+    )
+    assert counts["transactions"] == 3
+    assert counts["channels"] == 5  # 实体 Sheet 仍全量
+
+    workbook = load_workbook(path)
+    notes = {
+        row[6]
+        for row in workbook["Transactions"].iter_rows(min_row=2, values_only=True)
+    }
+    assert notes == {"范围首日", "范围中间", "范围末日"}
+    assert len(list(workbook["Channels"].iter_rows(min_row=2))) == 5
 
 
 def test_xlsx_import_row_errors(seeded_factory, target_factory, tmp_path):

@@ -13,7 +13,7 @@ from pathlib import Path
 
 APP_NAME = "Money Manager"
 APP_SLUG = "MoneyManager"  # 目录名不使用空格，避免路径问题
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.3.0"
 
 # 覆盖数据目录的环境变量名
 DATA_DIR_ENV_VAR = "MONEY_MANAGER_DATA_DIR"

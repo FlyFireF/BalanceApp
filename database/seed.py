@@ -51,21 +51,26 @@ def seed_defaults(session: Session) -> None:
         if session.scalar(select(Account).where(Account.name == name)) is None:
             session.add(Account(name=name, description=description))
 
-    for name in DEFAULT_INCOME_CATEGORIES:
+    # sort_order 按声明顺序写入：记账页默认选中列表第一项（支出：餐饮，收入：Salary）。
+    for sort_order, name in enumerate(DEFAULT_INCOME_CATEGORIES):
         if not session.scalar(
             select(Category).where(
                 Category.name == name, Category.type == CategoryType.INCOME.value
             )
         ):
-            session.add(Category(name=name, type=CategoryType.INCOME.value))
+            session.add(
+                Category(name=name, type=CategoryType.INCOME.value, sort_order=sort_order)
+            )
 
-    for name in DEFAULT_EXPENSE_CATEGORIES:
+    for sort_order, name in enumerate(DEFAULT_EXPENSE_CATEGORIES):
         if not session.scalar(
             select(Category).where(
                 Category.name == name, Category.type == CategoryType.EXPENSE.value
             )
         ):
-            session.add(Category(name=name, type=CategoryType.EXPENSE.value))
+            session.add(
+                Category(name=name, type=CategoryType.EXPENSE.value, sort_order=sort_order)
+            )
 
     for key, value in DEFAULT_SETTINGS.items():
         if session.get(Setting, key) is None:

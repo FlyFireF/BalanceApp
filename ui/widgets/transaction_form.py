@@ -161,10 +161,12 @@ class TransactionForm(QWidget):
         self._reload_categories()
 
     def _reload_categories(self) -> None:
-        """按当前类型加载分类，默认选中 Other。"""
+        """按当前类型加载分类，默认选中列表第一项（用户自定义排序的结果）。"""
         options = self._catalog.list_active_categories(self.type())
         self._reload_combo(self.category_combo, options)
-        self._select_by_name(self.category_combo, "Other")
+        # 取用户排序后的第一项作为默认值：第一项改名/停用后自动顺延，
+        # 无需按名称硬编码（空列表时 setCurrentIndex(0) 无效果）。
+        self.category_combo.setCurrentIndex(0)
 
     def _reload_combo(self, combo: QComboBox, options: list[IdName]) -> None:
         combo.blockSignals(True)
@@ -186,7 +188,3 @@ class TransactionForm(QWidget):
             index = combo.count() - 1
         combo.setCurrentIndex(index)
 
-    def _select_by_name(self, combo: QComboBox, name: str) -> None:
-        index = combo.findText(name)
-        if index >= 0:
-            combo.setCurrentIndex(index)

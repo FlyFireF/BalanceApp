@@ -118,6 +118,25 @@ class TransactionRepository:
         )
         return list(self._session.scalars(stmt))
 
+    def list_in_range(
+        self, date_from: date | None, date_to: date | None
+    ) -> list[Transaction]:
+        """日期范围（含首尾）内的交易；预加载渠道/账户/分类，按日期倒序。"""
+        stmt = (
+            select(Transaction)
+            .options(
+                selectinload(Transaction.channel),
+                selectinload(Transaction.account),
+                selectinload(Transaction.category),
+            )
+            .order_by(Transaction.date.desc(), Transaction.id.desc())
+        )
+        if date_from is not None:
+            stmt = stmt.where(Transaction.date >= date_from)
+        if date_to is not None:
+            stmt = stmt.where(Transaction.date <= date_to)
+        return list(self._session.scalars(stmt))
+
     def list_up_to(self, end_date: date) -> list[Transaction]:
         """日期 <= end_date 的全部交易（预加载渠道/账户，月度统计用）。"""
         stmt = (
